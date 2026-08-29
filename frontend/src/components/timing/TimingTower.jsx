@@ -10,11 +10,10 @@ const sortFns = {
   tyre: (a,b)=> (a.compound||'').localeCompare(b.compound||''),
 }
 
-export default memo(function TimingTower({ rows, sessionType }) {
+export default memo(function TimingTower({ rows, sessionType, selected, onSelect }) {
   const [sortKey, setSortKey] = useState('position')
   const sorted = useMemo(()=>{
     const fn = sortFns[sortKey] || sortFns.position
-    // For race default position, for quali default position as well (already quali order)
     return [...(rows||[])].sort(fn)
   }, [rows, sortKey])
 
@@ -49,7 +48,7 @@ export default memo(function TimingTower({ rows, sessionType }) {
       </div>
 
       <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-        {sorted.map((r,i)=><TimingRow key={r.abbr} row={r} index={i} />)}
+        {sorted.map((r,i)=><TimingRow key={r.abbr} row={r} index={i} selected={selected===r.abbr} onSelect={onSelect} />)}
       </div>
 
       <div style={{ fontSize:10, color:'#666', display:'flex', gap:10, flexWrap:'wrap', marginTop:6 }}>

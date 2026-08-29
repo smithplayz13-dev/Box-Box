@@ -126,3 +126,4 @@ export const getLiveSessions = (year) => api.get(`/api/live/sessions?year=${year
 export const getLiveDiscover = (year) => api.get(`/api/live/discover${year ? `?year=${year}` : ''}`)
 export const getLiveTiming = (sessionKey) => api.get(`/api/live/timing?session_key=${sessionKey}`)
 export const getLiveTimingByMeta = (year, meetingName, sessionType) => api.get(`/api/live/timing?year=${year}&meeting_name=${encodeURIComponent(meetingName)}&session_type=${encodeURIComponent(sessionType)}`)
+export const getLiveMap = (sessionKey) => api.get(`/api/live/map?session_key=${sessionKey}`)

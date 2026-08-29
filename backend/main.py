@@ -623,3 +623,79 @@ async def live_stream(request: Request, session_key: int):
             await asyncio.sleep(3)
 
     return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+@app.get("/api/live/map", dependencies=[Depends(verify_api_key)])
+@limiter.limit("60/minute")
+async def live_map(request: Request, session_key: int):
+    """Car positions x/y for circuit map + car telemetry (throttle/brake/gear/drs)."""
+    try:
+        from services.openf1.client import get_location, get_car_data, get_drivers, get_positions
+        import asyncio
+        async def _safe(coro, default):
+            try:
+                return await coro
+            except:
+                return default
+        loc, car, drivers, positions = await asyncio.gather(
+            _safe(get_location(session_key), []),
+            _safe(get_car_data(session_key), []),
+            _safe(get_drivers(session_key), []),
+            _safe(get_positions(session_key), []),
+        )
+        # Build driver lookup for team color
+        from services.openf1.timing import _team_color
+        dmap = {str(d["driver_number"]): d for d in drivers}
+        # latest location per driver
+        latest_loc = {}
+        for entry in loc:
+            dn = str(entry.get("driver_number"))
+            # keep latest by date
+            if dn not in latest_loc or entry.get("date","") > latest_loc[dn].get("date",""):
+                latest_loc[dn] = entry
+        # latest car_data per driver
+        latest_car = {}
+        for cd in car:
+            dn = str(cd.get("driver_number"))
+            if dn not in latest_car or cd.get("date","") > latest_car[dn].get("date",""):
+                latest_car[dn] = cd
+        # position map
+        pos_map = {}
+        for p in positions:
+            dn = str(p.get("driver_number"))
+            if dn not in pos_map or p.get("date","") > pos_map[dn].get("date",""):
+                pos_map[dn] = p
+        cars = []
+        for dn, l in latest_loc.items():
+            drv = dmap.get(dn, {})
+            car_info = latest_car.get(dn, {})
+            pos_info = pos_map.get(dn, {})
+            # stale if >8s old
+            stale = False
+            try:
+                from datetime import datetime, timezone
+                d = datetime.fromisoformat(l.get("date","").replace("Z","+00:00"))
+                stale = (datetime.now(timezone.utc) - d).total_seconds() > 8
+            except:
+                pass
+            cars.append({
+                "driver_number": l.get("driver_number"),
+                "abbr": drv.get("name_acronym", str(dn)),
+                "team": drv.get("team_name", "Unknown"),
+                "team_color": _team_color(drv.get("team_name","")),
+                "x": l.get("x"),
+                "y": l.get("y"),
+                "z": l.get("z"),
+                "date": l.get("date"),
+                "position": pos_info.get("position"),
+                "speed": car_info.get("speed", 0),
+                "throttle": car_info.get("throttle"),
+                "brake": car_info.get("brake"),
+                "gear": car_info.get("n_gear") or car_info.get("gear"),
+                "rpm": car_info.get("rpm"),
+                "drs": car_info.get("drs"),
+                "stale": stale,
+            })
+        # fallback: if no location, try to synthesize from timing positions (no x/y)
+        return {"session_key": session_key, "cars": cars, "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Live map unavailable: {str(e)[:300]}")

@@ -9,7 +9,7 @@ function posChangeIcon(delta) {
   return <Minus size={12} color="#666" />
 }
 
-export default memo(function TimingRow({ row, index }) {
+export default memo(function TimingRow({ row, index, selected, onSelect }) {
   // row: {position, abbr, full_name, team, team_color, gap_text, interval_text, last_lap, best_lap, is_pb, is_sb, s1,s2,s3, speed, compound, tyre_age, is_pit, in_pit}
   const isPit = row.is_pit || row.in_pit
   // visual state
@@ -27,19 +27,21 @@ export default memo(function TimingRow({ row, index }) {
 
   const gapStyle = row.position===1 ? { color:'#999' } : row.gap_text?.startsWith('+') ? {} : { color:'#666' }
 
+  const isSelected = !!selected
   return (
-    <div style={{
+    <div onClick={()=>onSelect && onSelect(row.abbr)} style={{
       display:'grid',
       gridTemplateColumns:'32px 70px 1fr 90px 90px 90px 110px 70px',
       gap:8,
       alignItems:'center',
       padding:'8px 10px',
       borderRadius:10,
-      background: index%2===0 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.015)',
+      background: isSelected ? 'rgba(225,6,0,0.15)' : index%2===0 ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.015)',
       borderLeft:`4px solid ${row.team_color || '#444'}`,
-      border: isPit ? '1px solid #FFB800' : '1px solid transparent',
+      border: isSelected ? '1px solid #e10600' : isPit ? '1px solid #FFB800' : '1px solid transparent',
       opacity: row.last_lap==='—' ? 0.6 : 1,
-      fontFamily:"'Space Grotesk',sans-serif"
+      fontFamily:"'Space Grotesk',sans-serif",
+      cursor:'pointer'
     }}>
       <div style={{ fontWeight:900, color:'white', fontSize:14, textAlign:'center' }}>{row.position}</div>
       <div style={{ display:'flex', alignItems:'center', gap:6 }}>
