@@ -13,6 +13,7 @@ const FantasyPicks = lazy(() => import('./pages/FantasyPicks'));
 const LapExplainer = lazy(() => import('./pages/LapExplainer'));
 const Standings = lazy(() => import('./pages/Standings'));
 const DriverCareer = lazy(() => import('./pages/DriverCareer'));
+const LiveTiming = lazy(() => import('./pages/LiveTiming'));
 
 function App() {
   const location = useLocation();
@@ -79,6 +80,7 @@ function App() {
           <Routes location={location} key={location.pathname}>
             <Route path="/" element={<Layout />}>
               <Route index element={<Home />} />
+              <Route path="live" element={<LiveTiming />} />
               <Route path="race-analysis" element={<RaceAnalysis />} />
               <Route path="rivalry-tracker" element={<RivalryTracker />} />
               <Route path="fantasy-picks" element={<FantasyPicks />} />

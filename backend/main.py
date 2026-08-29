@@ -543,3 +543,83 @@ async def fetch_career_compare(request: Request, req: CareerCompareReq):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Career comparison failed: {str(e)}")
+
+
+# --- Live Timing Endpoints (OpenF1) ---
+
+@app.get("/api/live/sessions", dependencies=[Depends(verify_api_key)])
+@limiter.limit("30/minute")
+async def live_sessions(request: Request, year: int = 2025):
+    """List OpenF1 sessions for a year."""
+    if year < 2023 or year > 2027:
+        raise HTTPException(status_code=400, detail="Year out of range")
+    try:
+        from services.openf1.client import get_sessions
+        data = await get_sessions(year)
+        return {"sessions": data, "year": year}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenF1 sessions unavailable: {str(e)[:200]}")
+
+@app.get("/api/live/discover", dependencies=[Depends(verify_api_key)])
+@limiter.limit("30/minute")
+async def live_discover(request: Request, year: int = None):
+    """Auto-discover current live and next session."""
+    try:
+        from services.openf1.timing import discover_sessions
+        result = await discover_sessions(year)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Discover failed: {str(e)[:200]}")
+
+@app.get("/api/live/timing", dependencies=[Depends(verify_api_key)])
+@limiter.limit("60/minute")
+async def live_timing(request: Request, session_key: int = None, year: int = None, meeting_name: str = None, session_type: str = None):
+    """Full timing tower for a session. Provide session_key or year+meeting_name+session_type."""
+    try:
+        from services.openf1.client import get_sessions
+        from services.openf1.timing import build_timing
+        if not session_key:
+            if not (year and meeting_name and session_type):
+                raise HTTPException(status_code=400, detail="Provide session_key or year+meeting_name+session_type")
+            meeting_name = _sanitize_text_input(meeting_name, 80)
+            session_type = _sanitize_text_input(session_type, 30)
+            sessions = await get_sessions(year)
+            # find matching
+            target = None
+            for s in sessions:
+                if s.get("meeting_name", "").lower() == meeting_name.lower() and s.get("session_name", "").lower() == session_type.lower():
+                    target = s
+                    break
+                if s.get("meeting_name", "").lower() in meeting_name.lower() or meeting_name.lower() in s.get("meeting_name", "").lower():
+                    if s.get("session_type", "").lower() == session_type.lower() or s.get("session_name", "").lower() == session_type.lower():
+                        target = s
+            if not target:
+                raise HTTPException(status_code=404, detail="Session not found")
+            session_key = target.get("session_key")
+        result = await build_timing(int(session_key))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Live timing unavailable: {str(e)[:300]}")
+
+@app.get("/api/live/stream", dependencies=[Depends(verify_api_key)])
+async def live_stream(request: Request, session_key: int):
+    """SSE stream for live timing (polls OpenF1 every 3s, pushes JSON)."""
+    from fastapi.responses import StreamingResponse
+    import json, asyncio
+    from services.openf1.timing import build_timing
+
+    async def event_gen():
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                data = await build_timing(int(session_key))
+                payload = json.dumps(data)
+                yield f"data: {payload}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)[:200]})}\n\n"
+            await asyncio.sleep(3)
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
