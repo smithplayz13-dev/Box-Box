@@ -655,13 +655,20 @@ def get_lap_telemetry(year: int, race: str, driver: str, lap: int) -> dict:
             except Exception as speed_error:
                 print(f"[Speed optional] {speed_error}")
 
+            def _clean(v):
+                try:
+                    if isinstance(v, float) and np.isnan(v): return 0
+                    if pd.isna(v): return 0
+                except Exception:
+                    pass
+                return v
             return {
-                "lap_time": lap_time,
-                "sector1": round(s1, 3),
-                "sector2": round(s2, 3),
-                "sector3": round(s3, 3),
-                "max_speed": max_speed,
-                "avg_speed": avg_speed,
+                "lap_time": _clean(lap_time) if isinstance(lap_time, (int,float)) else lap_time,
+                "sector1": _clean(round(float(s1 or 0), 3)),
+                "sector2": _clean(round(float(s2 or 0), 3)),
+                "sector3": _clean(round(float(s3 or 0), 3)),
+                "max_speed": _clean(max_speed),
+                "avg_speed": _clean(avg_speed),
                 "sector_deltas": {"s1": 0, "s2": 0, "s3": 0},
             }
 
@@ -713,25 +720,55 @@ def get_lap_telemetry(year: int, race: str, driver: str, lap: int) -> dict:
 
         def to_seconds(value):
             try:
-                return round(value.total_seconds(), 3)
+                if value is None or (isinstance(value, float) and np.isnan(value)):
+                    return 0
+                if pd.isna(value):
+                    return 0
+                # timedelta / Timedelta
+                secs = value.total_seconds()
+                if pd.isna(secs) or (isinstance(secs, float) and np.isnan(secs)):
+                    return 0
+                return round(float(secs), 3)
             except Exception:
-                return 0
+                try:
+                    v = float(value)
+                    if np.isnan(v):
+                        return 0
+                    return round(v, 3)
+                except Exception:
+                    return 0
 
         max_speed = 0
         avg_speed = 0
         if not telemetry.empty and "Speed" in telemetry:
             speeds = telemetry["Speed"].dropna()
             if len(speeds) > 0:
-                max_speed = int(speeds.max())
-                avg_speed = int(speeds.mean())
+                try:
+                    max_speed = int(speeds.max()) if not pd.isna(speeds.max()) else 0
+                    avg_speed = int(speeds.mean()) if not pd.isna(speeds.mean()) else 0
+                    if np.isnan(max_speed): max_speed = 0
+                    if np.isnan(avg_speed): avg_speed = 0
+                except Exception:
+                    max_speed = 0
+                    avg_speed = 0
+
+        def _san(v):
+            try:
+                if isinstance(v, float) and np.isnan(v):
+                    return 0
+                if pd.isna(v):
+                    return 0
+            except Exception:
+                pass
+            return v
 
         return {
-            "lap_time": lap_time,
-            "sector1": to_seconds(s1),
-            "sector2": to_seconds(s2),
-            "sector3": to_seconds(s3),
-            "max_speed": max_speed,
-            "avg_speed": avg_speed,
+            "lap_time": lap_time if not (isinstance(lap_time, float) and np.isnan(lap_time)) else "--:--.---",
+            "sector1": _san(to_seconds(s1)),
+            "sector2": _san(to_seconds(s2)),
+            "sector3": _san(to_seconds(s3)),
+            "max_speed": _san(max_speed),
+            "avg_speed": _san(avg_speed),
             "sector_deltas": {"s1": 0, "s2": 0, "s3": 0},
         }
 

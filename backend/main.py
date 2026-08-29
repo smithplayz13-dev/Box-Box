@@ -56,9 +56,12 @@ async def verify_api_key(request: Request):
 # Event on startup
 @app.on_event("startup")
 async def startup_event():
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        print("[WARNING] GEMINI_API_KEY is not set. AI features will fail!")
+    # Support GEMINI_API_KEY (legacy) and OPENROUTER_API_KEY / OPENAI_API_KEY / AI_PROVIDER
+    from ai_advisor import AI_PROVIDER, AI_ENABLED, AI_BASE_URL, DEFAULT_MODEL
+    if not AI_ENABLED:
+        print(f"[WARNING] AI disabled (provider={AI_PROVIDER}). Set GEMINI_API_KEY or OPENROUTER_API_KEY/OPENAI_API_KEY to enable AI features. Deterministic fallbacks will be used.")
+    else:
+        print(f"[INFO] AI enabled provider={AI_PROVIDER} model={DEFAULT_MODEL} base={AI_BASE_URL}")
     
     # Verify Cache structure exists
     cache_dir = os.path.join(os.path.dirname(__file__), 'cache')
@@ -83,7 +86,11 @@ class CareerCompareReq(BaseModel):
 @limiter.limit("60/minute")
 async def health_check(request: Request):
     """Public health endpoint, no API key needed for basic check."""
-    return {"status": "ok", "ai": "gemini-1.5-pro"}
+    try:
+        from ai_advisor import AI_PROVIDER, DEFAULT_MODEL, AI_ENABLED
+        return {"status": "ok", "ai": f"{AI_PROVIDER}:{DEFAULT_MODEL}", "ai_enabled": AI_ENABLED}
+    except Exception:
+        return {"status": "ok", "ai": "gemini-1.5-pro"}
 
 @app.get("/api/debug-telemetry")
 async def debug_telemetry():
@@ -117,8 +124,23 @@ async def debug_telemetry():
     except Exception as e:
         results["gemini"] = str(e)
 
+    try:
+        from ai_advisor import AI_PROVIDER, AI_ENABLED, DEFAULT_MODEL, AI_BASE_URL
+        results["ai_provider"] = AI_PROVIDER
+        results["ai_model"] = DEFAULT_MODEL
+        results["ai_base_url"] = AI_BASE_URL
+        results["ai_enabled"] = AI_ENABLED
+    except Exception as e:
+        results["ai_provider"] = f"error: {e}"
+
     results["env"] = {
         "GEMINI_API_KEY": "set" if os.getenv("GEMINI_API_KEY") else "MISSING",
+        "OPENROUTER_API_KEY": "set" if os.getenv("OPENROUTER_API_KEY") else "MISSING",
+        "OPENAI_API_KEY": "set" if os.getenv("OPENAI_API_KEY") else "MISSING",
+        "NVIDIA_API_KEY": "set" if os.getenv("NVIDIA_API_KEY") else "MISSING",
+        "AI_PROVIDER": os.getenv("AI_PROVIDER") or "auto",
+        "AI_MODEL": os.getenv("AI_MODEL") or os.getenv("OPENROUTER_MODEL") or os.getenv("NVIDIA_MODEL") or os.getenv("GEMINI_MODEL") or "default",
+        "AI_BASE_URL": os.getenv("AI_BASE_URL") or "auto",
         "API_SECRET_KEY": "set" if os.getenv("API_SECRET_KEY") else "MISSING",
     }
 

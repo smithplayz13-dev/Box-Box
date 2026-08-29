@@ -10,41 +10,164 @@ try:
 except Exception as import_error:
     genai = None
     GENAI_AVAILABLE = False
-    print(f"[WARNING] google-generativeai import failed: {import_error}. AI generation disabled; deterministic fallbacks will be used.")
+    print(f"[WARNING] google-generativeai import failed: {import_error}. AI generation disabled for Gemini; other providers may still work.")
 
 load_dotenv()
 
-# We check it at startup in main.py, but for local tests it's useful to verify here
-api_key = os.getenv("GEMINI_API_KEY")
-AI_ENABLED = bool(api_key and GENAI_AVAILABLE)
-if api_key and GENAI_AVAILABLE:
-    genai.configure(api_key=api_key)
-elif api_key and not GENAI_AVAILABLE:
-    print("[WARNING] GEMINI_API_KEY is set but google-generativeai is unavailable. Falling back to deterministic analysis.")
-else:
-    print("[WARNING] GEMINI_API_KEY not set in ai_advisor.py. AI generation disabled; deterministic fallbacks will be used.")
+# --- Provider & Key Resolution (Gemini + OpenRouter/OpenAI + NVIDIA NIM) ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
+# Generic fallback: AI_API_KEY works for any OpenAI-compatible provider
+GENERIC_API_KEY = os.getenv("AI_API_KEY")
 
-generation_config = (
-    genai.GenerationConfig(
-        temperature=0.1,
-        top_p=0.8,
-        top_k=20,
-        max_output_tokens=250,
-    )
-    if GENAI_AVAILABLE
-    else None
-)
+AI_PROVIDER_RAW = os.getenv("AI_PROVIDER", "").strip().lower()
+# Normalize aliases
+if AI_PROVIDER_RAW in ("openai-compatible", "openai_compatible", "compatible"):
+    AI_PROVIDER_RAW = "openai-compatible"
+if AI_PROVIDER_RAW in ("nvidia", "nim", "nvidia-nim"):
+    AI_PROVIDER_RAW = "nvidia"
+
+# Auto-detect provider if not explicitly set
+if not AI_PROVIDER_RAW:
+    if OPENROUTER_API_KEY or (GENERIC_API_KEY and os.getenv("OPENROUTER_MODEL")):
+        AI_PROVIDER = "openrouter"
+    elif OPENAI_API_KEY:
+        AI_PROVIDER = "openai"
+    elif NVIDIA_API_KEY:
+        AI_PROVIDER = "nvidia"
+    elif GEMINI_API_KEY and GENAI_AVAILABLE:
+        AI_PROVIDER = "gemini"
+    else:
+        AI_PROVIDER = "gemini"  # default, will be disabled if no key
+else:
+    AI_PROVIDER = AI_PROVIDER_RAW
+# Normalize nvidia -> openai-compatible
+if AI_PROVIDER == "nvidia":
+    AI_PROVIDER = "openai-compatible"
+
+# Resolve effective API key / base URL / default model per provider
+AI_API_KEY_RESOLVED = None
+AI_BASE_URL = os.getenv("AI_BASE_URL", "").strip()
+AI_MODEL_ENV = os.getenv("AI_MODEL", "").strip()
+
+if AI_PROVIDER == "openrouter":
+    AI_API_KEY_RESOLVED = OPENROUTER_API_KEY or GENERIC_API_KEY or OPENAI_API_KEY
+    if not AI_BASE_URL:
+        AI_BASE_URL = "https://openrouter.ai/api/v1"
+    DEFAULT_MODEL = AI_MODEL_ENV or os.getenv("OPENROUTER_MODEL", "").strip() or "google/gemini-2.5-flash"
+    FALLBACK_MODELS = [DEFAULT_MODEL, "openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-2.0-flash-001"]
+elif AI_PROVIDER == "openai":
+    AI_API_KEY_RESOLVED = OPENAI_API_KEY or GENERIC_API_KEY
+    if not AI_BASE_URL:
+        AI_BASE_URL = "https://api.openai.com/v1"
+    DEFAULT_MODEL = AI_MODEL_ENV or os.getenv("OPENAI_MODEL", "").strip() or "gpt-4o-mini"
+    FALLBACK_MODELS = [DEFAULT_MODEL, "gpt-4o", "gpt-4o-mini"]
+elif AI_PROVIDER == "openai-compatible":
+    AI_API_KEY_RESOLVED = GENERIC_API_KEY or NVIDIA_API_KEY or OPENAI_API_KEY or OPENROUTER_API_KEY
+    # NVIDIA NIM hosted default; self-hosted NIM / Ollama override via AI_BASE_URL
+    if not AI_BASE_URL:
+        if NVIDIA_API_KEY or AI_PROVIDER_RAW in ("nvidia", "nim"):
+            AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
+            # sensible NIM default if user didn't set AI_MODEL
+            if not AI_MODEL_ENV:
+                AI_MODEL_ENV = os.getenv("NVIDIA_MODEL", "").strip() or "meta/llama-3.1-405b-instruct"
+        else:
+            # generic compatible must set AI_BASE_URL (e.g. local Ollama http://localhost:11434/v1)
+            pass
+    DEFAULT_MODEL = AI_MODEL_ENV or "gpt-4o-mini"
+    # Build fallback chain: env override AI_FALLBACK_MODELS (comma sep) else sensible defaults
+    _fallback_env = os.getenv("AI_FALLBACK_MODELS", "").strip()
+    if _fallback_env:
+        FALLBACK_MODELS = [m.strip() for m in _fallback_env.split(",") if m.strip()]
+        if DEFAULT_MODEL not in FALLBACK_MODELS:
+            FALLBACK_MODELS = [DEFAULT_MODEL] + FALLBACK_MODELS
+    else:
+        is_nim = AI_BASE_URL == "https://integrate.api.nvidia.com/v1" or NVIDIA_API_KEY
+        if is_nim:
+            # NIM fallback chain: verified working for this account when kimi-k3 is 429
+            # nano-omni passes validation (starts with driver name), nano-30b often returns meta commentary and fails
+            _nim_chain = [
+                DEFAULT_MODEL,
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+                "nvidia/nemotron-3-nano-30b-a3b",
+                "nvidia/nemotron-3-super-120b-a12b",
+                "meta/llama-3.2-11b-vision-instruct",
+                "moonshotai/kimi-k3",
+            ]
+            FALLBACK_MODELS = []
+            for m in _nim_chain:
+                if m and m not in FALLBACK_MODELS:
+                    FALLBACK_MODELS.append(m)
+            # Also respect user AI_MODEL if different from chain head
+            if DEFAULT_MODEL not in FALLBACK_MODELS:
+                FALLBACK_MODELS.insert(0, DEFAULT_MODEL)
+        else:
+            # Generic OpenAI-compatible fallbacks
+            FALLBACK_MODELS = []
+            for m in [DEFAULT_MODEL, "gpt-4o", "gpt-4o-mini"]:
+                if m and m not in FALLBACK_MODELS:
+                    FALLBACK_MODELS.append(m)
+else:  # gemini
+    AI_API_KEY_RESOLVED = GEMINI_API_KEY
+    DEFAULT_MODEL = AI_MODEL_ENV or os.getenv("GEMINI_MODEL", "").strip() or "gemini-1.5-pro"
+    FALLBACK_MODELS = [DEFAULT_MODEL, "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.5-flash"]
+
+def _is_placeholder_key(k: str) -> bool:
+    if not k:
+        return True
+    kk = k.strip().lower()
+    return kk.startswith("your_") or "xxxx" in kk or kk in ("fallback_dev_key", "your_google_gemini_api_key_here", "sk-or-v1-xxxx", "sk-xxxx")
+
+# Determine if AI is enabled
+if AI_PROVIDER in ("openrouter", "openai", "openai-compatible"):
+    AI_ENABLED = bool(AI_API_KEY_RESOLVED and not _is_placeholder_key(AI_API_KEY_RESOLVED) and AI_BASE_URL)
+    if AI_ENABLED:
+        print(f"[AI] Provider={AI_PROVIDER} BaseURL={AI_BASE_URL} Model={DEFAULT_MODEL} (OpenAI-compatible via httpx)")
+        try:
+            print(f"[AI] Fallback chain: {' -> '.join(FALLBACK_MODELS)}")
+        except Exception:
+            pass
+    else:
+        print(f"[WARNING] AI_PROVIDER={AI_PROVIDER} but API key or base URL missing/placeholder. AI disabled; deterministic fallbacks will be used.")
+        if AI_PROVIDER == "openrouter" and (not AI_API_KEY_RESOLVED or _is_placeholder_key(AI_API_KEY_RESOLVED)):
+            print("[HINT] Set OPENROUTER_API_KEY in backend/.env (get one at https://openrouter.ai/keys)")
+        if AI_PROVIDER == "openai-compatible" and not AI_BASE_URL:
+            print("[HINT] Set AI_BASE_URL for openai-compatible provider")
+else:
+    # Gemini path
+    AI_ENABLED = bool(GEMINI_API_KEY and not _is_placeholder_key(GEMINI_API_KEY) and GENAI_AVAILABLE)
+    if GEMINI_API_KEY and GENAI_AVAILABLE:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+        except Exception as e:
+            print(f"[Gemini Configure Error] {e}")
+            AI_ENABLED = False
+    elif GEMINI_API_KEY and not GENAI_AVAILABLE:
+        print("[WARNING] GEMINI_API_KEY is set but google-generativeai is unavailable. Falling back to deterministic analysis.")
+    else:
+        print("[WARNING] GEMINI_API_KEY not set. AI generation disabled; deterministic fallbacks will be used. Set GEMINI_API_KEY or switch AI_PROVIDER to openrouter/openai.")
+
+# Gemini-specific init
+generation_config = None
 model = None
-if AI_ENABLED:
+_MODEL_CACHE = {}
+
+if AI_PROVIDER == "gemini" and AI_ENABLED and GENAI_AVAILABLE:
     try:
+        generation_config = genai.GenerationConfig(
+            temperature=0.1,
+            top_p=0.8,
+            top_k=20,
+            max_output_tokens=250,
+        )
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-pro",
+            model_name=DEFAULT_MODEL if "gemini" in DEFAULT_MODEL else "gemini-1.5-pro",
             generation_config=generation_config
         )
     except Exception as e:
         print(f"[Gemini Init Error] {e}")
-
-_MODEL_CACHE = {}
 
 
 def _get_model(model_name: str):
@@ -57,12 +180,113 @@ def _get_model(model_name: str):
     return _MODEL_CACHE[model_name]
 
 
+def _map_generation_config_to_openai(override) -> dict:
+    """Map Gemini-style generation_config to OpenAI params."""
+    if override is None:
+        return {}
+    # override may be dict (rivalry) or GenerationConfig object
+    if isinstance(override, dict):
+        out = {}
+        if "temperature" in override:
+            out["temperature"] = override["temperature"]
+        if "top_p" in override:
+            out["top_p"] = override["top_p"]
+        if "max_output_tokens" in override:
+            out["max_tokens"] = override["max_output_tokens"]
+        if "max_tokens" in override:
+            out["max_tokens"] = override["max_tokens"]
+        return out
+    # GenerationConfig object -> try to extract attrs
+    try:
+        out = {}
+        if hasattr(override, "temperature"):
+            out["temperature"] = getattr(override, "temperature")
+        if hasattr(override, "top_p"):
+            out["top_p"] = getattr(override, "top_p")
+        if hasattr(override, "max_output_tokens"):
+            out["max_tokens"] = getattr(override, "max_output_tokens")
+        return out
+    except Exception:
+        return {}
+
+
+def _generate_openai_compatible(prompt: str, candidate_models: list, override_generation_config=None) -> str:
+    """Call OpenAI-compatible / OpenRouter chat completions endpoint via httpx."""
+    import httpx
+    params = _map_generation_config_to_openai(override_generation_config)
+    # default params if not overridden
+    if "temperature" not in params:
+        params["temperature"] = 0.1
+    if "max_tokens" not in params:
+        params["max_tokens"] = 250
+
+    headers = {
+        "Authorization": f"Bearer {AI_API_KEY_RESOLVED}",
+        "Content-Type": "application/json",
+    }
+    # OpenRouter recommended headers (optional but helps with ranking)
+    if AI_PROVIDER == "openrouter":
+        referer = os.getenv("OPENROUTER_REFERER", "http://localhost:5173")
+        title = os.getenv("OPENROUTER_TITLE", "BoxBox F1")
+        headers["HTTP-Referer"] = referer
+        headers["X-Title"] = title
+
+    for model_name in candidate_models:
+        try:
+            body = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": params.get("temperature", 0.1),
+                "max_tokens": params.get("max_tokens", 250),
+            }
+            if "top_p" in params:
+                body["top_p"] = params["top_p"]
+
+            # OpenRouter and OpenAI both support chat/completions
+            url = AI_BASE_URL.rstrip("/") + "/chat/completions"
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(url, headers=headers, json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                # Standard OpenAI response shape
+                text = ""
+                try:
+                    text = data["choices"][0]["message"]["content"] or ""
+                except Exception:
+                    # Some providers return slightly different shape
+                    text = data.get("choices", [{}])[0].get("text", "") or ""
+                text = (text or "").strip()
+                if text:
+                    return text
+        except Exception as e:
+            # httpx HTTPStatusError will include response body for debugging
+            detail = ""
+            try:
+                detail = e.response.text[:500] if hasattr(e, "response") and e.response is not None else ""
+            except Exception:
+                pass
+            print(f"[OpenAI-Compatible Generate Error:{model_name}] {e} {detail}")
+            continue
+    return ""
+
+
 def _generate_text(prompt: str, override_generation_config=None, preferred_models=None) -> str:
     """Generate text with model fallbacks to avoid hard failures when one model is unavailable."""
     if not AI_ENABLED:
         return ""
 
-    preferred = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+    # OpenAI-compatible path (OpenRouter, OpenAI, etc.)
+    if AI_PROVIDER in ("openrouter", "openai", "openai-compatible"):
+        # Build candidate list
+        env_preferred = DEFAULT_MODEL
+        candidate_models = []
+        for name in (preferred_models or [env_preferred] + FALLBACK_MODELS):
+            if name and name not in candidate_models:
+                candidate_models.append(name)
+        return _generate_openai_compatible(prompt, candidate_models, override_generation_config)
+
+    # Gemini path
+    preferred = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
     candidate_models = []
     for name in (preferred_models or [preferred, "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.5-flash"]):
         if name not in candidate_models:
@@ -72,7 +296,20 @@ def _generate_text(prompt: str, override_generation_config=None, preferred_model
         try:
             active_model = model if name == "gemini-1.5-pro" and model else _get_model(name)
             if override_generation_config is not None:
-                response = active_model.generate_content(prompt, generation_config=override_generation_config)
+                # Handle dict config for openai-style passed to gemini (rare)
+                if isinstance(override_generation_config, dict):
+                    # Convert dict to GenerationConfig
+                    try:
+                        gc = genai.GenerationConfig(
+                            temperature=override_generation_config.get("temperature", 0.05),
+                            top_p=override_generation_config.get("top_p", 0.7),
+                            max_output_tokens=override_generation_config.get("max_output_tokens", 120),
+                        )
+                        response = active_model.generate_content(prompt, generation_config=gc)
+                    except Exception:
+                        response = active_model.generate_content(prompt, generation_config=override_generation_config)
+                else:
+                    response = active_model.generate_content(prompt, generation_config=override_generation_config)
             else:
                 response = active_model.generate_content(prompt)
             text = (getattr(response, "text", "") or "").strip()
@@ -528,7 +765,6 @@ def _legacy_get_rivalry_analysis(stats: dict, d1: str, d2: str) -> str:
 def get_rivalry_analysis(stats: dict, d1: str, d2: str, year: int | None = None) -> str:
     print("[Rivalry AI] Called with:")
     print(f"  d1={d1}, d2={d2}, year={year}")
-    print(f"  stats={stats}")
 
     if not stats:
         return f"No statistics available for this {d1} vs {d2} matchup."
@@ -585,7 +821,7 @@ Rules:
             text = _generate_text(
                 attempt_prompt,
                 override_generation_config=rivalry_generation_config,
-                preferred_models=["gemini-1.5-pro"],
+                preferred_models=None,
             )
             text = " ".join((text or "").replace("  ", " ").split())
 
