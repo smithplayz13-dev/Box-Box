@@ -29,11 +29,12 @@ function useInterpolated(cars, enabled=true){
   const rafRef = useRef(null)
 
   useEffect(()=>{
-    if (!enabled || !cars) return
-    // store target
+    if (!enabled || !cars || cars.length===0) {
+      if (!enabled && cars) setDisplay(normalizePositions(cars))
+      return
+    }
     const now = performance.now()
     cars.forEach(c=> prevRef.current.set(c.abbr, { ...c, _t: now, _prev: prevRef.current.get(c.abbr) || c }))
-    // animate
     const animate = ()=>{
       const t = performance.now()
       const out = []
@@ -41,10 +42,8 @@ function useInterpolated(cars, enabled=true){
         const target = cars.find(x=>x.abbr===k)
         if (!target) return
         const prev = v._prev || target
-        // interpolate 400ms
         const dur = 400
         const p = Math.min(1, (t - v._t)/dur)
-        // if stale >3s, don't interpolate, snap
         const stale = (Date.now() - new Date(target.date||0).getTime()) > 5000
         const x = stale ? target.x : prev.x + (target.x - prev.x)*p
         const y = stale ? target.y : prev.y + (target.y - prev.y)*p
@@ -55,11 +54,6 @@ function useInterpolated(cars, enabled=true){
     }
     rafRef.current = requestAnimationFrame(animate)
     return ()=> cancelAnimationFrame(rafRef.current)
-  },[cars, enabled])
-
-  // fallback direct normalize if interpolation disabled
-  useEffect(()=>{
-    if (!enabled && cars) setDisplay(normalizePositions(cars))
   },[cars, enabled])
 
   return display

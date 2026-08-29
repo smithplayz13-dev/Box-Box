@@ -1,5 +1,15 @@
 import { Gauge, Activity, Fuel, Flag } from 'lucide-react'
 
+function Item({ label, value, sub }) {
+  return (
+    <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:10, padding:'8px 10px', minWidth:80 }}>
+      <div style={{ fontSize:10, color:'#888', letterSpacing:'0.08em' }}>{label}</div>
+      <div style={{ fontSize:16, fontWeight:900, color:'white', fontVariantNumeric:'tabular-nums' }}>{value ?? '—'}</div>
+      {sub && <div style={{ fontSize:10, color:'#666' }}>{sub}</div>}
+    </div>
+  )
+}
+
 export default function SelectedTelemetry({ car, row }) {
   if (!car && !row) return (
     <div style={{ background:'#0a0a0a', border:'1px solid rgba(255,255,255,0.06)', borderRadius:12, padding:16, textAlign:'center', color:'#666', fontSize:12 }}>
@@ -19,13 +29,6 @@ export default function SelectedTelemetry({ car, row }) {
   const lap = data.current_lap ?? data.lap
   const pos = data.position ?? '?'
 
-  const Item = ({ label, value, sub }) => (
-    <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:10, padding:'8px 10px', minWidth:80 }}>
-      <div style={{ fontSize:10, color:'#888', letterSpacing:'0.08em' }}>{label}</div>
-      <div style={{ fontSize:16, fontWeight:900, color:'white', fontVariantNumeric:'tabular-nums' }}>{value ?? '—'}</div>
-      {sub && <div style={{ fontSize:10, color:'#666' }}>{sub}</div>}
-    </div>
-  )
 
   return (
     <div style={{ background:'linear-gradient(180deg,#0f0f0f,#0a0a0a)', border:'1px solid rgba(255,255,255,0.06)', borderRadius:16, padding:12, display:'flex', flexDirection:'column', gap:10 }}>

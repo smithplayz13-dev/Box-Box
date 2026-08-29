@@ -3,7 +3,7 @@ import ConnectionStatus from './ConnectionStatus'
 
 export default function SessionHeader({ meta, connection, stale, retryIn }) {
   if (!meta) return null
-  const { meeting_name, circuit, session_name, session_type, date_start, date_end, status, total_laps, timestamp, session_best } = meta
+  const { meeting_name, circuit, session_name, session_type, date_start, status, total_laps, timestamp, session_best } = meta
   const sessionLabel = session_name || session_type || 'Session'
   // local session time
   let localTime = ''

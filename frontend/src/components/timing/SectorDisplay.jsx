@@ -7,7 +7,7 @@ function fmt(v) {
   return n.toFixed(3)
 }
 
-export default memo(function SectorDisplay({ s1, s2, s3, bestSectors }) {
+export default memo(function SectorDisplay({ s1, s2, s3 }) {
   // bestSectors not yet wired — placeholder for purple SB
   return (
     <span style={{ display:'inline-flex', gap:6, fontFamily:"'JetBrains Mono','Space Grotesk', monospace", fontSize:12, fontVariantNumeric:'tabular-nums' }}>

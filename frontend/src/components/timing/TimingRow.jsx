@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { TrendingUp, TrendingDown, Minus, AlertCircle } from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 import TyreBadge from './TyreBadge'
 import SectorDisplay from './SectorDisplay'
 
