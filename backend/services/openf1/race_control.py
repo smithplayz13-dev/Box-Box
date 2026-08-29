@@ -237,18 +237,15 @@ async def build_race_control(session_key: int) -> List[Dict[str, Any]]:
             return datetime.min.replace(tzinfo=timezone.utc)
     events_sorted = sorted(events, key=_sort_key, reverse=True)
 
-    # Deduplicate consecutive same title+driver within 10s? simple
+    # Deduplicate
     deduped = []
     last_keys = set()
     for e in events_sorted:
-        # if same type+abbr within 5s, skip duplicate
         dedup_key = f"{e['type']}|{e['abbr']}|{e['lap']}"
-        # Use timestamp diff check could be added but simple set for now dedup exact
         if dedup_key in last_keys and e["type"] in ("pit_stop","fastest_lap"):
-            # allow only one fastest per session, already
             continue
         deduped.append(e)
-        # keep limited set size to avoid memory
+        last_keys.add(dedup_key)
         if len(deduped) > 200:
             break
 

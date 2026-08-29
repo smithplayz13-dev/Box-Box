@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { getLiveSessions, getLiveDiscover, getLiveRaceControl } from '../services/api'
 import RaceControlFeed from '../components/raceControl/RaceControlFeed'
 import RaceControlBanner from '../components/raceControl/RaceControlBanner'
@@ -9,11 +9,10 @@ export default function RaceControl(){
   const [sessions, setSessions] = useState([])
   const [selectedKey, setSelectedKey] = useState(null)
   const [events, setEvents] = useState(null)
-  const [selectedDriver, setSelectedDriver] = useState(null)
+  const [selectedDriver] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [error, setError] = useState(null)
   const [discover, setDiscover] = useState(null)
-  const lastIdsRef = useRef(new Set())
   const critical = events?.find(e=> ['red_flag','safety_car','virtual_safety_car'].includes(e.type))
 
   const fetchDiscover = useCallback(async ()=>{

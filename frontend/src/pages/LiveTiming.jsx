@@ -87,8 +87,8 @@ export default function LiveTiming(){
       backoffRef.current = 1
       lastUpdateRef.current = Date.now()
       setRetryIn(null)
-      // auto-select first driver if none selected
-      if (!selected && data.drivers && data.drivers[0]) setSelected(data.drivers[0].abbr)
+      // auto-select first driver if none selected (functional update to avoid stale deps)
+      setSelected(prev => prev || (data.drivers && data.drivers[0] ? data.drivers[0].abbr : prev))
     } catch(e){
       const msg = e.message || 'API unavailable'
       setError(msg)
@@ -96,7 +96,7 @@ export default function LiveTiming(){
       backoffRef.current = Math.min(backoffRef.current*2, 32)
       setRetryIn(backoffRef.current)
     }
-  },[selectedKey, selected])
+  },[selectedKey])
 
   const fetchMap = useCallback(async ()=>{
     if (!selectedKey) return
@@ -142,9 +142,15 @@ export default function LiveTiming(){
     }, intervalMs)
     mapTimerRef.current = setInterval(fetchMap, isLive ? 2000 : 8000)
     rcTimerRef.current = setInterval(fetchRC, isLive ? 5000 : 30000)
-    const retryTimer = setInterval(()=>{ if (retryIn!=null && retryIn>0) setRetryIn(v=>v-1)},1000)
-    return ()=>{ clearInterval(timerRef.current); clearInterval(mapTimerRef.current); clearInterval(rcTimerRef.current); clearInterval(retryTimer) }
-  },[selectedKey, meta?.status, fetchTiming, fetchMap, fetchRC, status, retryIn])
+    return ()=>{ clearInterval(timerRef.current); clearInterval(mapTimerRef.current); clearInterval(rcTimerRef.current) }
+  },[selectedKey, meta?.status, fetchTiming, fetchMap, fetchRC, status])
+
+  // Retry countdown separate (avoids recreating polling loops)
+  useEffect(()=>{
+    if (retryIn==null || retryIn<=0) return
+    const id = setInterval(()=> setRetryIn(v=> (v!=null && v>0 ? v-1 : v)), 1000)
+    return ()=> clearInterval(id)
+  },[retryIn])
 
   const handleSelect = (e)=>{
     const v = Number(e.target.value)
