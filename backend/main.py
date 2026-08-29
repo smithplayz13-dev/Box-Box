@@ -624,6 +624,21 @@ async def live_stream(request: Request, session_key: int):
 
     return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
+@app.get("/api/live/race-control", dependencies=[Depends(verify_api_key)])
+@limiter.limit("60/minute")
+async def live_race_control(request: Request, session_key: int):
+    """Race Control incident feed for a session."""
+    if not session_key:
+        raise HTTPException(status_code=400, detail="session_key required")
+    try:
+        from services.openf1.race_control import build_race_control
+        events = await build_race_control(int(session_key))
+        return {"session_key": int(session_key), "events": events, "count": len(events)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Race control unavailable: {str(e)[:300]}")
+
 @app.get("/api/live/map", dependencies=[Depends(verify_api_key)])
 @limiter.limit("60/minute")
 async def live_map(request: Request, session_key: int):

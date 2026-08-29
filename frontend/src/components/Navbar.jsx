@@ -51,6 +51,7 @@ export default function Navbar() {
   const links = [
     { name: 'Home', path: '/', navId: 'home' },
     { name: 'Live', path: '/live', navId: 'live' },
+    { name: 'Race Control', path: '/race-control', navId: 'race-control' },
     { name: 'Race Analysis', path: '/race-analysis', navId: 'race-analysis' },
     { name: 'Rivalry Tracker', path: '/rivalry-tracker', navId: 'rivalry-tracker' },
     { name: 'Fantasy Picks', path: '/fantasy-picks', navId: 'fantasy-picks' },

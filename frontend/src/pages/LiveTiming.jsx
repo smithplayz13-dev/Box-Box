@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { getLiveSessions, getLiveDiscover, getLiveTiming, getLiveMap } from '../services/api'
+import { getLiveSessions, getLiveDiscover, getLiveTiming, getLiveMap, getLiveRaceControl } from '../services/api'
 import SessionHeader from '../components/timing/SessionHeader'
 import TimingTower from '../components/timing/TimingTower'
 import CircuitMap from '../components/timing/CircuitMap'
 import SelectedTelemetry from '../components/timing/SelectedTelemetry'
-import { RefreshCw, Calendar, Clock, AlertTriangle, WifiOff, ChevronUp, ChevronDown } from 'lucide-react'
+import RaceControlBanner from '../components/raceControl/RaceControlBanner'
+import RaceControlFeed from '../components/raceControl/RaceControlFeed'
+import { RefreshCw, Calendar, Clock, AlertTriangle, WifiOff, ChevronUp, ChevronDown, Flag } from 'lucide-react'
 
 function Countdown({ dateStr }) {
   const [left, setLeft] = useState('')
@@ -33,6 +35,7 @@ export default function LiveTiming(){
   const [meta, setMeta] = useState(null)
   const [rows, setRows] = useState([])
   const [cars, setCars] = useState([])
+  const [raceEvents, setRaceEvents] = useState(null)
   const [selected, setSelected] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [stale, setStale] = useState(false)
@@ -41,10 +44,12 @@ export default function LiveTiming(){
   const [discover, setDiscover] = useState(null)
   const [loading, setLoading] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [rcOpen, setRcOpen] = useState(false)
   const lastUpdateRef = useRef(0)
   const backoffRef = useRef(1)
   const timerRef = useRef(null)
   const mapTimerRef = useRef(null)
+  const rcTimerRef = useRef(null)
 
   const fetchDiscover = useCallback(async ()=>{
     try {
@@ -103,23 +108,43 @@ export default function LiveTiming(){
     }
   },[selectedKey])
 
+  const fetchRC = useCallback(async ()=>{
+    if (!selectedKey) return
+    try {
+      const r = await getLiveRaceControl(selectedKey)
+      const incoming = r.data.events || []
+      setRaceEvents(prev=>{
+        if (!prev) return incoming
+        const prevIds = new Set(prev.map(e=>e.id))
+        const newOnes = incoming.filter(e=> !prevIds.has(e.id))
+        if (newOnes.length===0 && incoming.length===prev.length) return prev
+        const map = new Map()
+        ;[...incoming, ...prev].forEach(e=>{ if(!map.has(e.id)) map.set(e.id, e)})
+        return Array.from(map.values()).sort((a,b)=> new Date(b.timestamp) - new Date(a.timestamp)).slice(0,200)
+      })
+    } catch{
+      // non-critical
+    }
+  },[selectedKey])
+
   useEffect(()=>{
     if (!selectedKey) return
-    fetchTiming(); fetchMap()
+    fetchTiming(); fetchMap(); fetchRC()
     const isLive = meta?.status === 'Live'
     let intervalMs = isLive ? 3000 : 15000
     if (status==='error') intervalMs = backoffRef.current * 1000
     if (timerRef.current) clearInterval(timerRef.current)
     if (mapTimerRef.current) clearInterval(mapTimerRef.current)
+    if (rcTimerRef.current) clearInterval(rcTimerRef.current)
     timerRef.current = setInterval(()=>{
       if (Date.now() - lastUpdateRef.current > 15000) setStale(true)
       fetchTiming()
     }, intervalMs)
-    // map polls faster for smooth animation
     mapTimerRef.current = setInterval(fetchMap, isLive ? 2000 : 8000)
+    rcTimerRef.current = setInterval(fetchRC, isLive ? 5000 : 30000)
     const retryTimer = setInterval(()=>{ if (retryIn!=null && retryIn>0) setRetryIn(v=>v-1)},1000)
-    return ()=>{ clearInterval(timerRef.current); clearInterval(mapTimerRef.current); clearInterval(retryTimer) }
-  },[selectedKey, meta?.status, fetchTiming, fetchMap, status, retryIn])
+    return ()=>{ clearInterval(timerRef.current); clearInterval(mapTimerRef.current); clearInterval(rcTimerRef.current); clearInterval(retryTimer) }
+  },[selectedKey, meta?.status, fetchTiming, fetchMap, fetchRC, status, retryIn])
 
   const handleSelect = (e)=>{
     const v = Number(e.target.value)
@@ -135,9 +160,12 @@ export default function LiveTiming(){
   const live = discover?.live
   const next = discover?.next
 
+  const criticalEvent = raceEvents?.find(e=> ['red_flag','safety_car','virtual_safety_car'].includes(e.type))
+
   return (
     <div style={{ maxWidth:1400, margin:'0 auto', padding:'12px', display:'flex', flexDirection:'column', gap:12, color:'white' }}>
       <SessionHeader meta={meta} connection={status} stale={stale} retryIn={retryIn} />
+      {criticalEvent && <RaceControlBanner event={criticalEvent} />}
 
       {/* Controls */}
       <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', background:'rgba(255,255,255,0.04)', padding:10, borderRadius:12, border:'1px solid rgba(255,255,255,0.06)' }}>
@@ -177,7 +205,14 @@ export default function LiveTiming(){
         <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
           <CircuitMap meetingName={meta?.meeting_name || meta?.location} cars={cars.map(c=>{ const row = rows.find(r=>r.abbr===c.abbr); return {...c, position: row?.position, team_color: row?.team_color || c.team_color, speed: c.speed ?? row?.speed}})} selected={selected} onSelect={setSelected} height={420} />
           <SelectedTelemetry car={selectedCar} row={selectedRow} />
-          {/* Mobile drawer toggle */}
+          {/* Compact Race Control (Live) */}
+          <div style={{ background:'#0a0a0a', border:'1px solid rgba(255,255,255,0.06)', borderRadius:12, overflow:'hidden' }}>
+            <button onClick={()=>setRcOpen(v=>!v)} style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 12px', background:'rgba(255,255,255,0.03)', border:'none', color:'white', fontWeight:800, fontSize:12, letterSpacing:'0.06em', cursor:'pointer' }}>
+              <span style={{ display:'flex', alignItems:'center', gap:6 }}><Flag size={12} color="#e10600"/> RACE CONTROL {raceEvents ? `• ${raceEvents.length}` : ''}</span>
+              {rcOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+            </button>
+            {rcOpen && <div style={{ padding:8, maxHeight:360, overflowY:'auto' }}><RaceControlFeed events={raceEvents?.slice(0,20) || []} selectedDriver={selected} /></div>}
+          </div>
           <button onClick={()=>setDrawerOpen(v=>!v)} style={{ display:'none', padding:'10px', borderRadius:10, background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.08)', color:'white', fontSize:12, fontWeight:800, alignItems:'center', justifyContent:'center', gap:6 }} className="mobile-drawer-btn">
             {drawerOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} {drawerOpen ? 'Hide Timing' : 'Show Timing Tower'}
           </button>
