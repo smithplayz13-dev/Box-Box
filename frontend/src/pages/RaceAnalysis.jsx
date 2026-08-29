@@ -61,7 +61,7 @@ export default function RaceAnalysis() {
           }
         }
       })
-      .catch(err => {
+      .catch(_err => {
         if (active) setError("Failed to load races for season.");
       });
     return () => { active = false; };

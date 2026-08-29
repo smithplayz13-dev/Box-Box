@@ -23,7 +23,11 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]|^motion$|^[a-z]+Motion$', argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
     },
+  },
+  {
+    files: ['src/context/ModeContext.jsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
 ])

@@ -1,13 +1,6 @@
 import { memo } from 'react'
 import { AlertCircle } from 'lucide-react'
 import TyreBadge from './TyreBadge'
-import SectorDisplay from './SectorDisplay'
-
-function posChangeIcon(delta) {
-  if (delta > 0) return <TrendingUp size={12} color="#00D2BE" />
-  if (delta < 0) return <TrendingDown size={12} color="#E10600" />
-  return <Minus size={12} color="#666" />
-}
 
 export default memo(function TimingRow({ row, index, selected, onSelect }) {
   // row: {position, abbr, full_name, team, team_color, gap_text, interval_text, last_lap, best_lap, is_pb, is_sb, s1,s2,s3, speed, compound, tyre_age, is_pit, in_pit}

@@ -150,7 +150,7 @@ export default function ShareModal({ isOpen, onClose, raceData }) {
           }
         );
         window.open(dataUrl, '_blank');
-      } catch (fallbackError) {
+      } catch (_fallbackError) {
         alert('Download failed. Try on desktop.');
       }
     } finally {

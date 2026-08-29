@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Cloud, Timer, Flag, Zap, ChevronRight, Clock } from 'lucide-react';
 import { motion, useReducedMotion, AnimatePresence } from 'framer-motion';
-import { useAnimatedCounter } from '../utils/useAnimatedCounter';
 import { useRaceCountdown } from '../utils/useRaceCountdown';
 import { useState, useEffect } from 'react';
 import PageTransition from '../components/PageTransition';
@@ -160,7 +159,6 @@ export default function Home() {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   const dur = (d) => shouldReduceMotion ? 0 : isMobile ? d * 0.7 : d;
 
-  const trackTemp = useAnimatedCounter(42.8, 1.5, 0.6, true);
   const { countdowns, activeWeekend } = useRaceCountdown();
   const { isBeginnerMode } = useMode();
 

@@ -1,6 +1,5 @@
 import { useRef } from 'react';
 import { motion, useInView } from 'framer-motion';
-import { getFlagUrl } from '../utils/flagHelper';
 import { useAnimatedCounter } from '../utils/useAnimatedCounter';
 import { Thermometer, Flame, Droplet, Wind, AlertTriangle } from 'lucide-react';
 import AILoadingBlock from './AILoadingBlock';

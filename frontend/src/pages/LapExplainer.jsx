@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Play, SkipForward, Info, Timer, Zap, Gauge, Map, AlertCircle } from 'lucide-react';
-import { motion, useReducedMotion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useAnimatedCounter } from '../utils/useAnimatedCounter';
 import ScrollProgress from '../components/ScrollProgress';
 import PageTransition from '../components/PageTransition';
@@ -16,12 +16,7 @@ const RESOLVED_DEFAULT_YEAR = YEAR_OPTIONS.includes(getDefaultYear()) ? getDefau
 const RESOLVED_DEFAULT_RACE = getLatestCompletedRace(parseInt(RESOLVED_DEFAULT_YEAR));
 
 export default function LapExplainer() {
-  const shouldReduceMotion = useReducedMotion();
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
-  const dur = (d) => (shouldReduceMotion ? 0 : isMobile ? d * 0.7 : d);
   const { isBeginnerMode } = useMode();
-
-  const [isPlaying, setIsPlaying] = useState(false);
   
   const [year, setYear] = useState(RESOLVED_DEFAULT_YEAR);
   const [gp, setGp] = useState(RESOLVED_DEFAULT_RACE?.name || 'Japanese Grand Prix');

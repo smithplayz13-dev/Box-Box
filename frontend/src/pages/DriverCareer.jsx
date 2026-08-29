@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trophy, Flag, Zap, Timer, Calendar, TrendingUp, ChevronDown, Users, Search } from 'lucide-react';
 import { fetchCareerStats, fetchCareerComparison } from '../services/api';
@@ -113,6 +113,8 @@ export default function DriverCareer() {
   const [careerData, setCareerData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [longLoading, setLongLoading] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [heroAnimated, setHeroAnimated] = useState(false);
@@ -120,28 +122,44 @@ export default function DriverCareer() {
   const [goatToast, setGoatToast] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Fetch career data
+  // Fetch career data — Jolpica pagination can take 10-20s for Hamilton (383 races)
   useEffect(() => {
     let cancelled = false;
+    let longTimer = null;
     async function load() {
       setLoading(true);
       setError(null);
+      setLongLoading(false);
       setHeroAnimated(false);
+      longTimer = setTimeout(() => { if (!cancelled) setLongLoading(true) }, 5000);
       try {
         const data = await fetchCareerStats(selectedDriver.id);
         if (!cancelled) {
+          clearTimeout(longTimer);
+          setLongLoading(false);
+          if (!data || !data.totals) throw new Error('No career data returned');
           setCareerData(data);
           setTimeout(() => setHeroAnimated(true), 300);
         }
       } catch (err) {
-        if (!cancelled) setError(err.message || 'Failed to load career data');
+        if (!cancelled) {
+          clearTimeout(longTimer);
+          setLongLoading(false);
+          const msg = err.message || 'Failed to load career data';
+          // Map timeout / 502 to user-friendly
+          if (msg.includes('TIMEOUT') || msg.includes('timeout') || msg.includes('502') || msg.includes('Network')) {
+            setError('Career data is taking longer than expected — Jolpica is slow or rate-limited. Please retry in a moment. (No data was fabricated.)');
+          } else {
+            setError(msg);
+          }
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { clearTimeout(longTimer); setLoading(false); }
       }
     }
     load();
-    return () => { cancelled = true; };
-  }, [selectedDriver.id]);
+    return () => { cancelled = true; clearTimeout(longTimer); };
+  }, [selectedDriver.id, retryKey]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -303,11 +321,12 @@ export default function DriverCareer() {
           }}
         >
           <p style={{ color: '#e10600', fontFamily: 'Space Grotesk', fontWeight: 600, fontSize: 18 }}>
-            Career data unavailable for this driver
+            Career data unavailable
           </p>
-          <p style={{ color: '#888', fontSize: 14, marginTop: 8 }}>{error}</p>
+          <p style={{ color: '#888', fontSize: 14, marginTop: 8, lineHeight: 1.5 }}>{error}</p>
+          <p style={{ color: '#666', fontSize: 12, marginTop: 6 }}>The rest of BoxBox remains usable. Try another driver or retry — we won't hammer the API.</p>
           <button
-            onClick={() => { setError(null); setCareerData(null); setLoading(true); }}
+            onClick={() => { setRetryKey(k=>k+1) }}
             style={{
               marginTop: 16, padding: '10px 28px',
               background: '#e10600', color: 'white', border: 'none',
@@ -321,7 +340,17 @@ export default function DriverCareer() {
       )}
 
       {/* ── Loading Skeleton ── */}
-      {loading && !error && <HeroSkeleton />}
+      {loading && !error && (
+        <>
+          <HeroSkeleton />
+          {longLoading && (
+            <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} style={{ textAlign:'center', marginTop:16, color:'#888', fontFamily:'Space Grotesk', fontSize:12, lineHeight:1.5 }}>
+              <p>Fetching full career history — {selectedDriver.name} has many seasons, this can take up to 20 seconds.</p>
+              <p style={{ color:'#666', fontSize:11, marginTop:4 }}>Powered by Jolpica (Ergast mirror) — no data is fabricated. Please wait, or try another driver.</p>
+            </motion.div>
+          )}
+        </>
+      )}
 
       {/* ── Hero Section ── */}
       {careerData && !loading && !error && (
@@ -329,7 +358,6 @@ export default function DriverCareer() {
           data={careerData}
           driver={selectedDriver}
           animated={heroAnimated}
-          onCompare={() => setCompareOpen(true)}
           onGoatToast={() => {
             setGoatToast(true);
             setTimeout(() => setGoatToast(false), 3500);
@@ -340,7 +368,7 @@ export default function DriverCareer() {
       {/* ── Timeline ── */}
       {loading && !error && <div style={{ marginTop: '3rem' }}><TimelineSkeleton /></div>}
       {careerData && !loading && !error && (
-        <TimelineSection data={careerData} driver={selectedDriver} />
+        <TimelineSection data={careerData} />
       )}
 
       {/* Compare button */}
@@ -483,7 +511,7 @@ function DriverOption({ driver, selected, onClick }) {
 //  HERO SECTION
 // ══════════════════════════════════════════════
 
-function HeroSection({ data, driver, animated, onCompare, onGoatToast }) {
+function HeroSection({ data, driver, animated, onGoatToast }) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   const totals = data.totals;
   const driverInfo = data.driver_info;
@@ -796,11 +824,10 @@ function HeroSection({ data, driver, animated, onCompare, onGoatToast }) {
 //  TIMELINE SECTION
 // ══════════════════════════════════════════════
 
-function TimelineSection({ data, driver }) {
+function TimelineSection({ data }) {
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   const seasons = data.seasons;
   const sortedYears = Object.keys(seasons).sort((a, b) => b - a); // newest first
-  const maxWins = Math.max(...sortedYears.map(y => seasons[y].wins), 1);
 
   return (
     <div style={{ marginTop: '3rem', position: 'relative' }}>
@@ -1069,7 +1096,7 @@ function CompareModal({ currentDriver, currentData, onClose }) {
   }
 
   // AI Verdict
-  async function getVerdict() {
+  const getVerdict = useCallback(async () => {
     if (!compareDriver || !currentDriver) return;
     setVerdictLoading(true);
     try {
@@ -1080,11 +1107,13 @@ function CompareModal({ currentDriver, currentData, onClose }) {
     } finally {
       setVerdictLoading(false);
     }
-  }
+  }, [compareDriver, currentDriver]);
 
   useEffect(() => {
-    if (compareData && currentData) getVerdict();
-  }, [compareData]);
+    if (compareData && currentData) {
+      void getVerdict();
+    }
+  }, [compareData, currentData, getVerdict]);
 
   const statRows = currentData && compareData ? [
     { label: 'Championships', a: currentData.totals.championships, b: compareData.totals.championships },

@@ -112,7 +112,7 @@ export const CAREER_MOMENTS = {
 };
 
 // Get moment for a specific driver and year, with generic fallback
-export function getCareerMoment(driverId, year, team) {
+export function getCareerMoment(driverId, year, _team) {
   const moments = CAREER_MOMENTS[driverId];
   if (moments && moments[year]) return moments[year];
   return null; // No generic fallback — keep timeline clean

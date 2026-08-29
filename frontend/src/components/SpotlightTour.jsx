@@ -45,8 +45,11 @@ const MOBILE_STEPS = [
 // Mini confetti burst on completion
 function ConfettiBurst({ onComplete }) {
   const COLORS = ['#E10600', '#F59E0B', '#00D2BE', '#FFFFFF', '#FF6B6B', '#47efda', '#FBBF24', '#e10600'];
+  // Confetti particles generated once via ref for stable animation.
+  // Math.random here is intentional and non-blocking: useRef ensures
+  // one-time initialization; particles are purely decorative.
   const particles = useRef(
-    COLORS.map((color, i) => ({
+    COLORS.map((color) => ({
       color,
       x: (Math.random() - 0.5) * 200,
       y: (Math.random() - 0.5) * 200,
@@ -117,7 +120,8 @@ export default function SpotlightTour({ active, onComplete }) {
 
   useEffect(() => {
     if (!active) return;
-    updateSpotlight();
+    // Defer initial measurement to avoid synchronous setState in effect
+    queueMicrotask(updateSpotlight);
     window.addEventListener('resize', updateSpotlight);
     window.addEventListener('scroll', updateSpotlight);
     return () => {

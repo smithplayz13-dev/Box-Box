@@ -32,7 +32,9 @@ function App() {
           setShowOnboarding(true);
         }, 1500);
       }
-    } catch {}
+    } catch {
+      // localStorage unavailable — ignore
+    }
 
     return () => {
       if (timer) clearTimeout(timer);

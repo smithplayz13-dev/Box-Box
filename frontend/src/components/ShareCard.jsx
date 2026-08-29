@@ -17,7 +17,7 @@ const hexToRgba = (hex, alpha = 1) => {
 };
 
 // ── Team colour lookup ────────────────────────────────────────────────────────
-export const getShareTeamColor = (team = '') => {
+const getShareTeamColor = (team = '') => {
   const map = {
     'Red Bull Racing':  '#3671C6',
     'Red Bull':         '#3671C6',
@@ -292,7 +292,7 @@ export default function ShareCard({ raceData, format = 'square', cardId = 'share
     };
     loadImages();
     return () => { cancelled = true; };
-  }, [p1?.code, p2?.code, p3?.code]);
+  }, [p1, p2, p3]);
 
   const d1 = { ...p1, pos: 1 };
   const d2 = { ...p2, pos: 2 };

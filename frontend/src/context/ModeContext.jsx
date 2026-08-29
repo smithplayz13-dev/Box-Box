@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState } from 'react';
 
 const ModeContext = createContext();
 const MODE_KEY = 'boxbox_mode';
@@ -17,6 +17,7 @@ export const ModeProvider = ({ children }) => {
     try {
       return (localStorage.getItem(MODE_KEY) || localStorage.getItem(LEGACY_MODE_KEY)) === 'beginner';
     } catch {
+      // localStorage unavailable — default to expert mode
       return false;
     }
   });
@@ -25,6 +26,7 @@ export const ModeProvider = ({ children }) => {
     try {
       return (localStorage.getItem(TUTORIAL_KEY) || localStorage.getItem(LEGACY_TUTORIAL_KEY)) === 'true';
     } catch {
+      // localStorage unavailable — default to not seen
       return false;
     }
   });
@@ -35,7 +37,9 @@ export const ModeProvider = ({ children }) => {
       try {
         localStorage.setItem(MODE_KEY, newMode ? 'beginner' : 'expert');
         localStorage.removeItem(LEGACY_MODE_KEY);
-      } catch {}
+      } catch {
+        // localStorage unavailable — ignore
+      }
       return newMode;
     });
   };
@@ -46,7 +50,9 @@ export const ModeProvider = ({ children }) => {
     try {
       localStorage.setItem(MODE_KEY, nextIsBeginner ? 'beginner' : 'expert');
       localStorage.removeItem(LEGACY_MODE_KEY);
-    } catch {}
+    } catch {
+      // localStorage unavailable — ignore
+    }
   };
 
   const dismissTutorial = () => {
@@ -54,7 +60,9 @@ export const ModeProvider = ({ children }) => {
     try {
       localStorage.setItem(TUTORIAL_KEY, 'true');
       localStorage.removeItem(LEGACY_TUTORIAL_KEY);
-    } catch {}
+    } catch {
+      // localStorage unavailable — ignore
+    }
   };
 
   return (
@@ -69,5 +77,3 @@ export const ModeProvider = ({ children }) => {
     </ModeContext.Provider>
   );
 };
-
-export default ModeContext;

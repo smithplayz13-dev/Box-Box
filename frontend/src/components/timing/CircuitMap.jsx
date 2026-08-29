@@ -30,7 +30,11 @@ function useInterpolated(cars, enabled=true){
 
   useEffect(()=>{
     if (!enabled || !cars || cars.length===0) {
-      if (!enabled && cars) setDisplay(normalizePositions(cars))
+      if (!enabled && cars) {
+        const next = normalizePositions(cars);
+        // Defer to avoid synchronous setState in effect (non-blocking)
+        queueMicrotask(() => setDisplay(next));
+      }
       return
     }
     const now = performance.now()

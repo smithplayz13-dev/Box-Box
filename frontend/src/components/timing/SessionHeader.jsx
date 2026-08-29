@@ -12,7 +12,9 @@ export default function SessionHeader({ meta, connection, stale, retryIn }) {
       const d = new Date(date_start)
       localTime = d.toLocaleString(undefined, { weekday:'short', hour:'2-digit', minute:'2-digit', timeZoneName:'short' })
     }
-  } catch {}
+  } catch {
+    // invalid date_start — localTime remains empty
+  }
   return (
     <div style={{ background:'linear-gradient(180deg, #0f0f0f, #080808)', border:'1px solid rgba(255,255,255,0.06)', borderRadius:16, padding:'14px 16px', display:'flex', flexDirection:'column', gap:12 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10 }}>

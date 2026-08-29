@@ -74,7 +74,9 @@ export default function OnboardingModal({ onComplete }) {
       localStorage.setItem('onboarding_done', 'true');
       localStorage.setItem('boxbox_mode', selection);
       localStorage.removeItem('pitwall_mode');
-    } catch {}
+    } catch {
+      // localStorage unavailable — ignore
+    }
 
     setMode(selection);
     onComplete?.(selection);
