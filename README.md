@@ -238,12 +238,12 @@ to ensure pages fully unmount before next page mounts.
 ### Prerequisites
 - Node.js 18+
 - Python 3.11+
-- Google Gemini API key (free at ai.google.dev)
+- AI key: Gemini (free at ai.google.dev) **or** OpenRouter **or** NVIDIA NIM (`nvapi-...` at build.nvidia.com) — any one works, fallback to deterministic if missing
 
 ### Backend Setup
 ```bash
-git clone https://github.com/RAJJBHALARA/Box-Box.git
-cd boxbox/backend
+git clone https://github.com/smithplayz13-dev/Box-Box.git
+cd Box-Box/backend
 
 python -m venv venv
 # Windows:
@@ -255,21 +255,22 @@ pip install -r requirements.txt
 
 # Create .env file:
 cp .env.example .env
-# Add your keys to .env
+# Edit .env — see Environment Variables below
 
 uvicorn main:app --reload
 # Backend running at http://localhost:8000
 # API docs at http://localhost:8000/docs
+# Health at http://localhost:8000/api/health
 ```
 
 ### Frontend Setup
 ```bash
-cd boxbox/frontend
+cd ../frontend
 npm install
 
 # Create .env.local:
 cp .env.example .env.local
-# Add your backend URL and API key
+# Set VITE_API_URL and VITE_API_KEY to match backend
 
 npm run dev
 # Frontend running at http://localhost:5173
@@ -278,13 +279,60 @@ npm run dev
 ### Environment Variables
 
 **backend/.env**
-GEMINI_API_KEY=your_gemini_api_key
-API_SECRET_KEY=any_random_32_char_string
-ALLOWED_ORIGINS=http://localhost:5173
+```ini
+API_SECRET_KEY=any_random_32_char_string  # must match frontend VITE_API_KEY
+ALLOWED_ORIGINS=http://localhost:5173     # comma-separated for prod
 
-**frontend/.env.local**
+# Pick ONE AI provider (fallbacks are deterministic if none set):
+GEMINI_API_KEY=your_gemini_key
+# or OpenRouter:
+# AI_PROVIDER=openrouter
+# OPENROUTER_API_KEY=sk-or-v1-...
+# OPENROUTER_MODEL=google/gemini-2.5-flash
+# or NVIDIA NIM (hosted or self-hosted):
+# AI_PROVIDER=nvidia
+# NVIDIA_API_KEY=nvapi-...
+# AI_MODEL=moonshotai/kimi-k3
+# AI_FALLBACK_MODELS=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning,nvidia/nemotron-3-nano-30b-a3b
+
+# Generic OpenAI-compatible (Ollama/Together):
+# AI_PROVIDER=openai-compatible
+# AI_API_KEY=...
+# AI_BASE_URL=http://localhost:11434/v1
+```
+
+**frontend/.env.local** (or `.env.example`)
+```ini
 VITE_API_URL=http://localhost:8000
 VITE_API_KEY=same_as_API_SECRET_KEY_above
+```
+
+### Production Deployment
+
+**Render (Backend)**
+1. Create Web Service from `smithplayz13-dev/Box-Box`, Root Directory `backend`, `render.yaml` is pre-configured.
+2. Set Environment Variables in Render Dashboard (all `sync: false`):
+   `API_SECRET_KEY` (generate `openssl rand -hex 16`), `ALLOWED_ORIGINS=https://your-frontend.vercel.app,https://your-preview-*.vercel.app,http://localhost:5173`, plus one AI key (`GEMINI_API_KEY` **or** `NVIDIA_API_KEY`/`OPENROUTER_API_KEY`).
+3. Deploy. `healthCheckPath: /api/health` verifies. FastF1 disk cache is ephemeral — first request after deploy re-downloads ~80MB and shows “Building Cache…” banner (expected).
+
+**Vercel (Frontend)**
+1. Import `smithplayz13-dev/Box-Box`, Framework `Vite`, Root Directory `frontend`, Build `npm run build`, Output `dist`.
+2. Add Environment Variables: `VITE_API_URL=https://your-backend.onrender.com`, `VITE_API_KEY=same_as_backend_API_SECRET_KEY`.
+3. Deploy. `vercel.json` handles SPA rewrites (`/* → /index.html`) so refreshing `/race-analysis` etc. never 404, and caches `assets/*` immutable.
+
+**API URL Configuration**
+- Frontend reads `VITE_API_URL` at build time (`src/services/api.js:9`). Changing it requires rebuild/redeploy.
+- Backend `ALLOWED_ORIGINS` must include the exact Vercel URL (including `https://`). For preview deploys, add `https://your-project-*.vercel.app`.
+- Never put `GEMINI_API_KEY`/`NVIDIA_API_KEY` in `VITE_*` — they stay server-only.
+
+**Troubleshooting**
+- `AUTH_ERROR`/`403 Invalid API key` → `VITE_API_KEY` ≠ `API_SECRET_KEY`.
+- `CORS blocked` → check `ALLOWED_ORIGINS` includes frontend origin (no trailing slash, comma-separated, no `*` with credentials).
+- `REQUEST_TIMEOUT`/`Building Cache...` → Render free cold start + FastF1 download (60s). Wait, retry, or check `/api/health`.
+- Telemetry `500`/`NaN` → fixed in `f1_data.py` (sector NaN → `0`). Update to latest.
+- `429 Too Many Requests` (NIM/OpenRouter) → automatic fallback chain (`kimi-k3` → `nvidia/nemotron-3-nano-omni` → … → deterministic). Override via `AI_FALLBACK_MODELS`.
+- `/api/debug-telemetry` now requires `X-API-Key` and is rate-limited (10/min).
+- `npm run build` fails → check `vite.config.js` (no proxy needed), ensure `VITE_API_URL` set.
 
 ---
 

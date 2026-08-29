@@ -1,14 +1,17 @@
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import os
+import re
+import time
 import fastf1
 import httpx
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 from f1_data import (
     get_available_races,
@@ -26,13 +29,39 @@ load_dotenv()
 
 # Setup Rate Limiting
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="BoxBox Backend", version="1.0.0")
+APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    from ai_advisor import AI_PROVIDER, AI_ENABLED, AI_BASE_URL, DEFAULT_MODEL
+    if not AI_ENABLED:
+        print(f"[WARNING] AI disabled (provider={AI_PROVIDER}). Set GEMINI_API_KEY or OPENROUTER_API_KEY/OPENAI_API_KEY/NVIDIA_API_KEY to enable AI features. Deterministic fallbacks will be used.")
+    else:
+        print(f"[INFO] AI enabled provider={AI_PROVIDER} model={DEFAULT_MODEL} base={AI_BASE_URL}")
+    if os.getenv("API_SECRET_KEY", "fallback_dev_key") == "fallback_dev_key" and os.getenv("RENDER") == "true":
+        print("[WARNING] API_SECRET_KEY is still fallback_dev_key in production! Set a strong random key via Render envVars.")
+    cache_dir = os.path.join(os.path.dirname(__file__), 'cache')
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        print(f"[INFO] FastF1 cache directory ready at {cache_dir}")
+    except Exception as e:
+        print(f"[WARNING] Could not create cache dir {cache_dir}: {e} (cache failures will not crash API)")
+    yield
+    # Shutdown (no-op)
+
+app = FastAPI(title="BoxBox Backend", version=APP_VERSION, lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Allowed Origins
+# Allowed Origins — production-safe: filter empties, warn on wildcard
 origins_env = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
-origins = [origin.strip() for origin in origins_env.split(",")]
+origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+if not origins:
+    origins = ["http://localhost:5173"]
+    print("[WARNING] ALLOWED_ORIGINS empty after parsing, falling back to http://localhost:5173")
+if "*" in origins:
+    print("[WARNING] ALLOWED_ORIGINS contains '*'. This disables credentialed CORS security. Prefer explicit origins.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +73,19 @@ app.add_middleware(
 
 # API Key Verification Dependency
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "fallback_dev_key")
+if len(API_SECRET_KEY) < 16 and os.getenv("RENDER") == "true":
+    print("[WARNING] API_SECRET_KEY is weak (<16 chars) in production.")
+
+def _sanitize_text_input(value: str, max_len: int = 100) -> str:
+    """Strip control chars and limit length to prevent prompt injection."""
+    if not isinstance(value, str):
+        return ""
+    v = re.sub(r"[\x00-\x1f\x7f]", "", value).strip()
+    if len(v) > max_len:
+        v = v[:max_len]
+    # Remove obvious prompt-injection markers
+    v = re.sub(r"(?i)(system:|assistant:|user:)", "", v)
+    return v
 async def verify_api_key(request: Request):
     """Enforce X-API-Key header on every route strictly as requested."""
     api_key = request.headers.get("X-API-Key")
@@ -53,32 +95,30 @@ async def verify_api_key(request: Request):
         raise HTTPException(status_code=403, detail="Invalid API key")
     return api_key
 
-# Event on startup
-@app.on_event("startup")
-async def startup_event():
-    # Support GEMINI_API_KEY (legacy) and OPENROUTER_API_KEY / OPENAI_API_KEY / AI_PROVIDER
-    from ai_advisor import AI_PROVIDER, AI_ENABLED, AI_BASE_URL, DEFAULT_MODEL
-    if not AI_ENABLED:
-        print(f"[WARNING] AI disabled (provider={AI_PROVIDER}). Set GEMINI_API_KEY or OPENROUTER_API_KEY/OPENAI_API_KEY to enable AI features. Deterministic fallbacks will be used.")
-    else:
-        print(f"[INFO] AI enabled provider={AI_PROVIDER} model={DEFAULT_MODEL} base={AI_BASE_URL}")
-    
-    # Verify Cache structure exists
-    cache_dir = os.path.join(os.path.dirname(__file__), 'cache')
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-        print(f"[INFO] Created FastF1 cache directory at {cache_dir}")
-    else:
-        print(f"[INFO] FastF1 cache directory ready at {cache_dir}")
-
 # Models
 class FantasyPicksReq(BaseModel):
     race: str
     year: int
 
+    @field_validator("race")
+    @classmethod
+    def validate_race(cls, v):
+        v = _sanitize_text_input(v, 80)
+        if len(v) < 3:
+            raise ValueError("race must be >=3 chars")
+        return v
+
 class CareerCompareReq(BaseModel):
     driver1_id: str
     driver2_id: str
+
+    @field_validator("driver1_id", "driver2_id")
+    @classmethod
+    def validate_driver(cls, v):
+        v = _sanitize_text_input(v, 20).upper()
+        if not re.match(r"^[A-Z0-9]{2,10}$", v):
+            raise ValueError("invalid driver id")
+        return v
 
 # --- API Endpoints ---
 
@@ -86,15 +126,51 @@ class CareerCompareReq(BaseModel):
 @limiter.limit("60/minute")
 async def health_check(request: Request):
     """Public health endpoint, no API key needed for basic check."""
+    import datetime
     try:
-        from ai_advisor import AI_PROVIDER, DEFAULT_MODEL, AI_ENABLED
-        return {"status": "ok", "ai": f"{AI_PROVIDER}:{DEFAULT_MODEL}", "ai_enabled": AI_ENABLED}
-    except Exception:
-        return {"status": "ok", "ai": "gemini-1.5-pro"}
+        from ai_advisor import AI_PROVIDER, DEFAULT_MODEL, AI_ENABLED, AI_BASE_URL
+        # Probe data services (lightweight, no heavy FastF1 load)
+        services = {}
+        try:
+            import requests
+            r = requests.get("https://api.openf1.org/v1/sessions?year=2025&session_type=Race", timeout=3)
+            services["openf1"] = "ok" if r.ok else f"error:{r.status_code}"
+        except Exception as e:
+            services["openf1"] = f"unavailable:{str(e)[:80]}"
+        try:
+            import fastf1
+            services["fastf1"] = "ok"
+        except Exception as e:
+            services["fastf1"] = str(e)[:80]
+        try:
+            import httpx
+            async def _probe_jolpica():
+                try:
+                    async with httpx.AsyncClient(timeout=3) as c:
+                        rr = await c.get("https://api.jolpi.ca/ergast/f1/2025/driverStandings.json")
+                        return "ok" if rr.status_code == 200 else f"error:{rr.status_code}"
+                except Exception as ee:
+                    return f"unavailable:{str(ee)[:60]}"
+            # Avoid blocking health on slow external call in sync context; probe quickly
+            services["jolpica"] = "probe_skipped"
+        except Exception:
+            services["jolpica"] = "unknown"
+        return {
+            "status": "ok",
+            "version": APP_VERSION,
+            "ai": f"{AI_PROVIDER}:{DEFAULT_MODEL}",
+            "ai_enabled": AI_ENABLED,
+            "ai_base_url": AI_BASE_URL,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "services": services,
+        }
+    except Exception as e:
+        return {"status": "ok", "version": APP_VERSION, "ai": "gemini-1.5-pro", "error": str(e)[:200]}
 
-@app.get("/api/debug-telemetry")
-async def debug_telemetry():
-    """Test endpoint to diagnose telemetry backend issues."""
+@app.get("/api/debug-telemetry", dependencies=[Depends(verify_api_key)])
+@limiter.limit("10/minute")
+async def debug_telemetry(request: Request):
+    """Test endpoint to diagnose telemetry backend issues. Requires X-API-Key."""
     results = {}
 
     try:
@@ -165,7 +241,16 @@ async def fetch_drivers(request: Request, year: int = 2024):
 @app.get("/api/lap-times", dependencies=[Depends(verify_api_key)])
 @limiter.limit("10/minute")
 async def fetch_lap_times_api(request: Request, year: int, race: str, session: str):
-    data = get_lap_times(year, race, session)
+    race = _sanitize_text_input(race, 80)
+    session = _sanitize_text_input(session, 10).upper()
+    if session not in ("R", "Q", "S", "RACE", "QUALIFYING", "SPRINT"):
+        raise HTTPException(status_code=400, detail="Invalid session. Use R, Q, or S.")
+    if year < 2018 or year > 2027:
+        raise HTTPException(status_code=400, detail="Year out of range (2018-2027)")
+    try:
+        data = get_lap_times(year, race, session[0])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Upstream lap-times failure: {str(e)[:200]}")
     if not data or not data.get("drivers"):
         raise HTTPException(status_code=404, detail="No lap times data available.")
     return data
@@ -173,7 +258,13 @@ async def fetch_lap_times_api(request: Request, year: int, race: str, session: s
 @app.get("/api/tire-strategy", dependencies=[Depends(verify_api_key)])
 @limiter.limit("10/minute")
 async def fetch_tire_strategy_api(request: Request, year: int, race: str):
-    data = get_tire_strategy(year, race)
+    race = _sanitize_text_input(race, 80)
+    if year < 2018 or year > 2027:
+        raise HTTPException(status_code=400, detail="Year out of range")
+    try:
+        data = get_tire_strategy(year, race)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Upstream tire-strategy failure: {str(e)[:200]}")
     if not data:
         raise HTTPException(status_code=404, detail="No tire strategy available.")
     return {"data": data}
@@ -183,17 +274,24 @@ import asyncio
 @app.get("/api/rivalry", dependencies=[Depends(verify_api_key)])
 @limiter.limit("10/minute")
 async def fetch_rivalry_api(request: Request, year: int, driver1: str, driver2: str):
+    driver1 = _sanitize_text_input(driver1, 10).upper()
+    driver2 = _sanitize_text_input(driver2, 10).upper()
+    if not re.match(r"^[A-Z]{2,3}$", driver1) or not re.match(r"^[A-Z]{2,3}$", driver2):
+        raise HTTPException(status_code=400, detail="Invalid driver code")
+    if year < 2018 or year > 2027:
+        raise HTTPException(status_code=400, detail="Year out of range")
     try:
         stats = await asyncio.to_thread(get_rivalry_stats, year, driver1, driver2)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Rivalry computation failed: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Rivalry computation failed upstream: {str(e)[:200]}")
     
     if not stats:
         raise HTTPException(status_code=404, detail="No rivalry data available.")
     
     try:
         ai_analysis = await asyncio.to_thread(get_rivalry_analysis, stats, driver1, driver2, year)
-    except Exception:
+    except Exception as e:
+        print(f"[Rivalry AI fallback] {e}")
         ai_analysis = ""
     
     return {
@@ -204,8 +302,17 @@ async def fetch_rivalry_api(request: Request, year: int, driver1: str, driver2: 
 @app.get("/api/telemetry", dependencies=[Depends(verify_api_key)])
 @limiter.limit("10/minute")
 async def fetch_telemetry_api(request: Request, year: int, race: str, driver: str, lap: int):
+    race = _sanitize_text_input(race, 80)
+    driver = _sanitize_text_input(driver, 10).upper()
+    if not re.match(r"^[A-Z]{2,3}$", driver):
+        raise HTTPException(status_code=400, detail="Invalid driver code")
+    if year < 2018 or year > 2027 or lap < 1 or lap > 100:
+        raise HTTPException(status_code=400, detail="Invalid year/lap range")
     print(f"[Telemetry API] year={year} race={race} driver={driver} lap={lap}")
-    telemetry = await asyncio.to_thread(get_lap_telemetry, year, race, driver, lap)
+    try:
+        telemetry = await asyncio.to_thread(get_lap_telemetry, year, race, driver, lap)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Telemetry upstream failure: {str(e)[:200]}")
     if not telemetry:
         raise HTTPException(status_code=404, detail="No telemetry available for this lap.")
 
@@ -225,11 +332,14 @@ async def fetch_telemetry_api(request: Request, year: int, race: str, driver: st
 @app.get("/api/pitwall-alert", dependencies=[Depends(verify_api_key)])
 @limiter.limit("10/minute")
 async def fetch_pitwall_alert(request: Request, circuit: str):
+    circuit = _sanitize_text_input(circuit, 80)
+    if len(circuit) < 3:
+        raise HTTPException(status_code=400, detail="Invalid circuit")
     try:
         insight = await asyncio.to_thread(get_circuit_insight, circuit)
         return {"insight": insight}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=502, detail=f"Pitwall upstream failure: {str(e)[:200]}")
 
 @app.post("/api/fantasy-picks", dependencies=[Depends(verify_api_key)])
 @limiter.limit("5/minute")

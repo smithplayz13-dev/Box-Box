@@ -2,13 +2,36 @@ services:
   - type: web
     name: pitwall-ai-backend
     env: python
-    buildCommand: pip install -r requirements.txt
+    plan: starter
+    runtime: python3.11
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
+    # FastF1 disk cache is ephemeral on Render free tier — 60s re-download on cold start is expected.
+    # For persistent cache, add a Render Disk mounted at /opt/render/project/src/backend/cache
     envVars:
       - key: GEMINI_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AI_PROVIDER
+        sync: false
+      - key: AI_MODEL
+        sync: false
+      - key: AI_BASE_URL
+        sync: false
+      - key: AI_FALLBACK_MODELS
         sync: false
       - key: API_SECRET_KEY
         sync: false
       - key: ALLOWED_ORIGINS
+        # Example: https://your-frontend.vercel.app,https://your-preview-*.vercel.app,http://localhost:5173
         sync: false
+      - key: APP_VERSION
+        value: 1.0.0
+      - key: RENDER
+        value: true
     healthCheckPath: /api/health

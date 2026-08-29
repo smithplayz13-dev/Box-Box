@@ -1,8 +1,10 @@
+// DEPRECATED — use src/services/api.js (configurable VITE_API_URL/VITE_API_KEY, 120s timeout, slow-api handling)
+// This file is kept for reference but not imported anywhere. Do not use in new code.
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000', // Update this for production
-  timeout: 60000, // Long timeout since AI processing or fastf1 might take a while
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  timeout: 60000,
 });
 
 export const fetchSeasons = async () => {
@@ -67,8 +69,7 @@ export const fetchCareerComparison = async (driver1Id, driver2Id) => {
 
 // Add interceptor to include API Key
 api.interceptors.request.use(config => {
-  config.headers['X-API-Key'] = 'fallback_dev_key'; // Default local dev key
-  // We can let the environment override later
+  config.headers['X-API-Key'] = import.meta.env.VITE_API_KEY || 'fallback_dev_key';
   return config;
 });
 
